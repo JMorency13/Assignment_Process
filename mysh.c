@@ -1,13 +1,4 @@
-/**
- * mysh.c - A simple Unix shell
- * 
- * COP 5614 - Operating Systems
- * Homework 1: Mini-Shell
- * Spring 2026
- * 
- * Author(s): [Your Name(s)]
- * Panther ID(s): [Your Panther ID(s)]
- */
+# Mini-Shell Implementation in C
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,220 +7,107 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 
-#define MAX_INPUT 1024
-#define MAX_ARGS 64
+#define MAX_LINE 1024  // Maximum length of input command
+#define MAX_ARGS 100   // Maximum number of arguments
 
-/* Function prototypes */
-void parse_input(char *input, char **args, int *argc);
-int is_builtin(char **args);
-void execute_builtin(char **args);
 void execute_command(char **args);
-void execute_redirection(char **args);
-void execute_pipe(char *input);
-int has_pipe(char *input);
-int has_redirection(char **args);
+void handle_built_in_commands(char **args);
 
-/**
- * Main function - implements the shell's REPL loop
- */
-int main(void)
-{
-    char input[MAX_INPUT];
+int main() {
     char *args[MAX_ARGS];
-    int argc;
-
+    char input[MAX_LINE];
     while (1) {
-        /* Step 1: Print prompt */
-        printf("mysh> ");
-        fflush(stdout);
+        printf("mini-shell> ");
+        fgets(input, MAX_LINE, stdin);
+        input[strcspn(input, "\n")] = 0;  // Remove newline character
 
-        /* Step 2: Read input */
-        if (fgets(input, sizeof(input), stdin) == NULL) {
-            /* EOF (Ctrl+D) - exit gracefully */
-            printf("\n");
+        if (strcmp(input, "exit") == 0) {
             break;
         }
 
-        /* Remove trailing newline */
-        input[strcspn(input, "\n")] = '\0';
-
-        /* Skip empty input */
-        if (strlen(input) == 0) {
-            continue;
+        // Tokenize the input string
+        char *token = strtok(input, " ");
+        int i = 0;
+        while (token != NULL) {
+            args[i++] = token;
+            token = strtok(NULL, " ");
         }
+        args[i] = NULL; // Null-terminate the arguments
 
-        /* Step 3: Check for pipe */
-        if (has_pipe(input)) {
-            execute_pipe(input);
-            continue;
-        }
-
-        /* Step 4: Parse input into args */
-        parse_input(input, args, &argc);
-
-        /* Skip if no command */
-        if (argc == 0) {
-            continue;
-        }
-
-        /* Step 5: Execute command */
-        if (is_builtin(args)) {
-            execute_builtin(args);
-        } else if (has_redirection(args)) {
-            execute_redirection(args);
-        } else {
-            execute_command(args);
-        }
+        handle_built_in_commands(args);
+        execute_command(args);
     }
-
     return 0;
 }
 
-/**
- * Parse input string into an array of arguments
- * 
- * @param input  The input string (will be modified by strtok)
- * @param args   Array to store argument pointers
- * @param argc   Pointer to store the argument count
- */
-void parse_input(char *input, char **args, int *argc)
-{
-    *argc = 0;
-    char *token = strtok(input, " ");
-    
-    while (token != NULL && *argc < MAX_ARGS - 1) {
-        args[*argc] = token;
-        (*argc)++;
-        token = strtok(NULL, " ");
+void execute_command(char **args) {
+    pid_t pid, wpid;
+    int status;
+
+    pid = fork();
+    if (pid == 0) {  // Child process
+        if (execvp(args[0], args) == -1) {
+            perror("mini-shell: command not found");
+        }
+        exit(EXIT_FAILURE);
+    } else if (pid < 0) {
+        perror("mini-shell: fork failed");
+    } else {  // Parent process
+        do {
+            wpid = waitpid(pid, &status, WUNTRACED);
+        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
     }
-    
-    args[*argc] = NULL;  /* NULL-terminate for execvp */
 }
 
-/**
- * Check if the command is a built-in command
- * 
- * @param args  The argument array
- * @return      1 if built-in, 0 otherwise
- */
-int is_builtin(char **args)
-{
-    if (args[0] == NULL) {
-        return 0;
+void handle_built_in_commands(char **args) {
+    // Handle I/O redirection
+    for (int i = 0; args[i] != NULL; i++) {
+        if (strcmp(args[i], ">") == 0) {
+            args[i] = NULL; // Null-terminate before redirection
+            int fd = open(args[i + 1], O_CREAT | O_WRONLY | O_TRUNC, 0644);
+            if (fd < 0) {
+                perror("mini-shell: open failed");
+                return;
+            }
+            dup2(fd, STDOUT_FILENO);
+            close(fd);
+            break;
+        }
+        else if (strcmp(args[i], "<") == 0) {
+            args[i] = NULL;
+            int fd = open(args[i + 1], O_RDONLY);
+            if (fd < 0) {
+                perror("mini-shell: open failed");
+                return;
+            }
+            dup2(fd, STDIN_FILENO);
+            close(fd);
+            break;
+        }
     }
-    
-    /* TODO: Check if args[0] is "cd", "pwd", or "exit" */
-    /* Return 1 if it's a built-in, 0 otherwise */
-    
-    return 0;  /* Replace this */
-}
-
-/**
- * Execute a built-in command (cd, pwd, exit)
- * 
- * @param args  The argument array
- */
-void execute_builtin(char **args)
-{
-    /* TODO: Implement cd */
-    /* Hint: Use chdir(). If args[1] is NULL, use getenv("HOME") */
-    
-    /* TODO: Implement pwd */
-    /* Hint: Use getcwd() */
-    
-    /* TODO: Implement exit */
-    /* Hint: Use exit(0) */
-}
-
-/**
- * Execute an external command (fork + exec + wait)
- * 
- * @param args  The argument array
- */
-void execute_command(char **args)
-{
-    /* TODO: Implement fork + execvp + wait */
-    /* 
-     * Hint:
-     * 1. Fork a child process
-     * 2. In child: call execvp(args[0], args)
-     * 3. In child: if execvp returns, it failed - print error and exit(1)
-     * 4. In parent: wait for child to finish
-     */
-}
-
-/**
- * Check if the input contains a pipe character
- * 
- * @param input  The raw input string
- * @return       1 if contains pipe, 0 otherwise
- */
-int has_pipe(char *input)
-{
-    /* TODO: Check if input contains '|' */
-    return 0;  /* Replace this */
-}
-
-/**
- * Check if the args contain redirection operators
- * 
- * @param args  The argument array
- * @return      1 if contains redirection, 0 otherwise
- */
-int has_redirection(char **args)
-{
-    /* TODO: Check if args contains ">", ">>", or "<" */
-    return 0;  /* Replace this */
-}
-
-/**
- * Execute a command with I/O redirection
- * 
- * @param args  The argument array (contains >, >>, or <)
- */
-void execute_redirection(char **args)
-{
-    /* TODO: Implement I/O redirection */
-    /*
-     * Hint:
-     * 1. Find the redirection operator and filename in args
-     * 2. Remove them from args (set to NULL)
-     * 3. Fork a child process
-     * 4. In child: open the file with appropriate flags
-     *    - ">"  : O_WRONLY | O_CREAT | O_TRUNC
-     *    - ">>" : O_WRONLY | O_CREAT | O_APPEND
-     *    - "<"  : O_RDONLY
-     * 5. In child: use dup2() to redirect stdin/stdout
-     * 6. In child: close the file descriptor
-     * 7. In child: call execvp()
-     * 8. In parent: wait for child
-     */
-}
-
-/**
- * Execute a pipe command (cmd1 | cmd2)
- * 
- * @param input  The raw input string containing the pipe
- */
-void execute_pipe(char *input)
-{
-    /* TODO: Implement pipe */
-    /*
-     * Hint:
-     * 1. Split input into two parts at '|'
-     * 2. Parse each part into its own args array
-     * 3. Create pipe: int pipefd[2]; pipe(pipefd);
-     * 4. Fork first child:
-     *    - Close pipefd[0] (read end)
-     *    - dup2(pipefd[1], STDOUT_FILENO)
-     *    - Close pipefd[1]
-     *    - execvp first command
-     * 5. Fork second child:
-     *    - Close pipefd[1] (write end)
-     *    - dup2(pipefd[0], STDIN_FILENO)
-     *    - Close pipefd[0]
-     *    - execvp second command
-     * 6. Parent: close both pipefd[0] and pipefd[1]
-     * 7. Parent: wait for both children
-     */
+    // Handle pipes
+    for (int i = 0; args[i] != NULL; i++) {
+        if (strcmp(args[i], "|") == 0) {
+            args[i] = NULL; // Null-terminate first command
+            int pipe_fd[2];
+            pipe(pipe_fd);
+            if (fork() == 0) {
+                dup2(pipe_fd[1], STDOUT_FILENO);
+                close(pipe_fd[0]);
+                execute_command(args);
+                exit(0);
+            }
+            if (fork() == 0) {
+                dup2(pipe_fd[0], STDIN_FILENO);
+                close(pipe_fd[1]);
+                execute_command(args + i + 1);
+                exit(0);
+            }
+            close(pipe_fd[0]);
+            close(pipe_fd[1]);
+            wait(NULL);
+            wait(NULL);
+            return;
+        }
+    }
 }
